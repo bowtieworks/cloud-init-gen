@@ -21,5 +21,5 @@ This tool aims at making the process of constructing a well-formed cloud-init fi
 This will generate a new cloud-init file in the same directory, as well as pass the new file contents to stdout.
 
 ## Misc
-Slack Taylor if you have questions
+Reach out to support@bowtie.works if you have any questions or need any assistance.
 

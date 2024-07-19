@@ -1,0 +1,10 @@
+instance-id: {{CONTROLLER HOSTNAME}}
+local-hostname: {{CONTROLLER HOSTNAME}}
+network:
+  version: 2
+  ethernets:
+    {{NIC_NAME}}:
+      dhcp4: false
+      addresses:
+        - {{STATIC_IPV4_IP}}/24
+network.encoding: base64
