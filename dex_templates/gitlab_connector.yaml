@@ -1,0 +1,10 @@
+type: gitlab
+id: gitlab
+name: GitLab
+config:
+  clientID: {{ CLIENT_ID }}
+  clientSecret: {{ CLIENT_SECRET }}
+  redirectURI: $DEX_ORIGIN/dex/callback
+  useLoginAsID: false
+  groups:
+    - {{ GROUP_NAME }}

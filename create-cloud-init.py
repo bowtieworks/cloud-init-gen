@@ -6,150 +6,200 @@ import getpass
 import readline
 import uuid
 
-def get_user_input(prompt, required=True, auto_generate=False, default=None):
+# Define templates directory and Dex connectors
+TEMPLATES_DIR = "./dex_templates"
+DEX_CONNECTORS = {
+    "github": "github_connector.yaml",
+    "gitlab": "gitlab_connector.yaml",
+    "google": "google_connector.yaml",
+    "oidc": "oidc_connector.yaml",
+    "saml": "saml_connector.yaml",
+}
+
+def get_user_input(prompt, required=True, auto_generate=False, default=None, validator=None):
     while True:
-        value = input(prompt)
-        if required and not value and not auto_generate:
-            print("This field is required.")
-        elif auto_generate and not value:
-            return str(uuid.uuid4()).lower()
-        elif default and not value:
-            return default
+        value = input(prompt).strip()
+        if not value:
+            if auto_generate:
+                return str(uuid.uuid4())
+            elif default:
+                return default
+            elif not required:
+                return ""
+            else:
+                print("This field is required.")
+                continue
+        if validator and not validator(value):
+            print("Invalid input. Please try again.")
         else:
             return value
 
 def get_sensitive_user_input(prompt):
-    while True:
-        value = getpass.getpass(prompt)
-        if not value:
-            print("This field is required.")
-        else:
-            return value
+    return getpass.getpass(prompt)
+
+def validate_uuid(value):
+    try:
+        uuid.UUID(value, version=4)
+        return True
+    except ValueError:
+        return False
 
 def remove_block(content, block_name):
     pattern = re.compile(rf'# start {block_name} block #.*?# end {block_name} block #', re.DOTALL)
     return re.sub(pattern, '', content)
 
 def remove_empty_lines(content):
-    return "\n".join([line for line in content.split("\n") if line.strip() != ""])
+    return "\n".join(line for line in content.split("\n") if line.strip())
 
 def remove_comments(content):
     lines = content.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        if line.strip().startswith('#cloud-config'):
-            cleaned_lines.append(line)
-        elif not line.strip().startswith('#'):
-            cleaned_lines.append(line)
-    return "\n".join(cleaned_lines)
+    return "\n".join(line for line in lines if not line.strip().startswith('#') or line.strip() == '#cloud-config')
 
 def generate_init_user_credentials(email, password):
     script_path = os.path.abspath('./generate-hash.sh')
     result = subprocess.run([script_path, email, password], capture_output=True, text=True)
-    output_lines = result.stdout.splitlines()
-    for line in output_lines:
-        if line.startswith(email):
-            return line
-    return None
+    return next((line for line in result.stdout.splitlines() if line.startswith(email)), None)
 
 def format_entrypoint(entrypoint):
-    entrypoint = entrypoint.strip('"')  # Remove any existing quotes
-    if not entrypoint.startswith("https://"):
-        entrypoint = f"https://{entrypoint}"
-    return f'"{entrypoint}"'
+    entrypoint = entrypoint.strip('"')
+    return f'"{entrypoint if entrypoint.startswith("https://") else f"https://{entrypoint}"}"'
+
+def list_dex_connectors():
+    print("\nChoose one of the below options:")
+    for index, connector in enumerate(DEX_CONNECTORS, start=1):
+        print(f"{index}. {connector.replace('_', ' ').capitalize()}")
+    print(f"{len(DEX_CONNECTORS) + 1}. Create my own SSO configuration")
+
+    choice = get_user_input(
+        "Choose a Dex connector (number): ",
+        validator=lambda x: x.isdigit() and 1 <= int(x) <= len(DEX_CONNECTORS) + 1
+    )
+    return "none" if int(choice) == len(DEX_CONNECTORS) + 1 else list(DEX_CONNECTORS.keys())[int(choice) - 1]
+
+def load_template(connector_key):
+    if connector_key == "none":
+        return ""
+    template_file = os.path.join(TEMPLATES_DIR, DEX_CONNECTORS[connector_key])
+    if not os.path.isfile(template_file):
+        print(f"Template for {connector_key} not found.")
+        return None
+    with open(template_file, 'r') as file:
+        return file.read()
+
+def extract_placeholders(template):
+    return re.findall(r'{{\s*(\w+)\s*}}', template)
+
+def gather_user_input_for_placeholders(placeholders):
+    return {placeholder: get_sensitive_user_input(f"Enter value for {placeholder}: ") if "SECRET" in placeholder.upper()
+            else get_user_input(f"Enter value for {placeholder}: ") for placeholder in placeholders}
+
+def replace_placeholders_in_template(template, user_data):
+    for key, value in user_data.items():
+        template = template.replace(f"{{{{ {key} }}}}", value)
+    return template
+
+def format_sso_config(template):
+    lines = template.split('\n')
+    formatted = []
+    # this is for indentation purposes
+    noindent = "" 
+    indent = "    "  
+    configindent = "      " 
+    in_list = False
+
+    for line in lines:
+        stripped = line.strip()
+        if ':' in stripped:
+            key, value = stripped.split(':', 1)
+            key = key.strip()
+            value = value.strip()
+
+            if key == 'type':
+                formatted.append(f"{noindent}{key}: {value}")
+                in_list = False
+            elif key in ['id', 'name']:
+                formatted.append(f"{indent}{key}: {value}")
+                in_list = False
+            elif key == 'config':
+                formatted.append(f"{indent}{key}:")
+                in_list = False
+            elif key == 'groups':
+                formatted.append(f"{configindent}{key}:")
+                in_list = True
+            else:
+                formatted.append(f"{configindent}{key}: {value}")
+                in_list = False
+        elif stripped.startswith('-') and in_list:
+            formatted.append(f"{configindent}  {stripped}")
+        elif stripped and in_list:
+            formatted.append(f"{configindent}  - {stripped}")
+
+    return '\n'.join(formatted)
 
 def main(args):
     with open(args.input, 'r') as file:
         cloud_config = file.read()
-    
-    # Gather user inputs
-    controller_hostname = get_user_input("Controller hostname: ")
-    site_id = get_user_input("Site ID (leave blank to auto-generate): ", auto_generate=True)
-    sync_psk = get_user_input("Sync PSK (leave blank to auto-generate): ", auto_generate=True)
 
-    use_ssh_key = input("Do you want to include an SSH key? (yes/no): ").strip().lower() == 'yes'
-    if use_ssh_key:
-        public_ssh_key = get_user_input("Public SSH key (e.g.: ssh-ed25519 AAAA bowtie): ")
-    else:
-        public_ssh_key = ''
-
-    use_sso = input("Do you want to use SSO for user authentication? (yes/no): ").strip().lower() == 'yes'
-    if use_sso:
-        idp_type = get_user_input("IDP type (lave blank to use oidc): ", required=False, default="oidc")
-        idp_id = get_user_input("IDP ID (e.g.: gitlab): ")
-        idp_name = get_user_input("IDP Name (e.g.: Gitlab): ")
-        idp_issuer_url = get_user_input("IDP Issuer URL (e.g.: https://gitlab.com): ")
-        idp_client_id = get_user_input("IDP Client ID (found in the Oauth application console): ")
-        idp_client_secret = get_user_input("IDP Client Secret (found in the Oauth application console): ")
-    else:
-        idp_type = idp_id = idp_name = idp_issuer_url = idp_client_id = idp_client_secret = ''
-
-    use_init_users = input("Do you want to generate an initial admin user? (yes/no): ").strip().lower() == 'yes'
-    if use_init_users:
-        init_user_email = get_user_input("Initial user email: ")
-        init_user_password = get_sensitive_user_input("Initial user password: ")
-        init_user_credentials = generate_init_user_credentials(init_user_email, init_user_password)
-    else:
-        init_user_credentials = ''
-
-    use_should_join = input("Do you want to join this controller to an existing cluster? (yes/no): ").strip().lower() == 'yes'
-    if use_should_join:
-        first_controller_hostname = get_user_input("Existing controller hostname: ")
-        first_controller_hostname = format_entrypoint(first_controller_hostname)
-    else:
-        first_controller_hostname = ''
-
-    # Prepare replacements dictionary
     replacements = {
-        'CONTROLLER_HOSTNAME': controller_hostname,
-        'IDP_TYPE': idp_type,
-        'IDP_ID': idp_id,
-        'IDP_NAME': idp_name,
-        'IDP_ISSUER_URL': idp_issuer_url,
-        'IDP_CLIENT_ID': idp_client_id,
-        'IDP_CLIENT_SECRET': idp_client_secret,
-        'SITE_ID': site_id,
-        'SYNC_PSK': sync_psk,
-        'INIT_USER_CREDENTIALS': init_user_credentials,
-        'FIRST_CONTROLLER_HOSTNAME': first_controller_hostname,
-        'PUBLIC_SSH_KEY': public_ssh_key
+        'CONTROLLER_HOSTNAME': get_user_input("Controller hostname: "),
+        'SITE_ID': get_user_input("Site ID (leave blank to auto-generate): ", auto_generate=True, validator=validate_uuid),
+        'SYNC_PSK': get_user_input("Sync PSK (leave blank to auto-generate): ", auto_generate=True),
     }
-    
-    # Handle optional blocks
-    if not use_sso:
-        cloud_config = remove_block(cloud_config, 'sso')
-    if not use_init_users:
-        cloud_config = remove_block(cloud_config, 'init-users')
-    if not use_should_join:
-        cloud_config = remove_block(cloud_config, 'should-join')
-    if not use_ssh_key:
+
+    if get_user_input("Include an SSH key? (y/n): ").lower() == 'y':
+        replacements['PUBLIC_SSH_KEY'] = get_user_input("Public SSH key: ")
+    else:
         cloud_config = remove_block(cloud_config, 'ssh key')
 
-    # Replace placeholders
-    cloud_config = replace_placeholders(cloud_config, replacements)
-    
-    # Remove extra new lines and comments
-    cloud_config = remove_empty_lines(cloud_config)
-    cloud_config = remove_comments(cloud_config)
+    if get_user_input("Include a placeholder for root password? (y/n): ").lower() == 'y':
+        replacements['ROOT_HASHED_PASSWORD'] = '{{ ROOT_HASHED_PASSWORD }}'
+    else:
+        cloud_config = remove_block(cloud_config, 'root password')
 
-    # Write the final cloud-config yaml to a file
+    if get_user_input("Use SSO for user authentication? (y/n): ").lower() == 'y':
+        connector_key = list_dex_connectors()
+        connector_template = load_template(connector_key)
+        if connector_template is None:
+            print("Failed to load the selected Dex connector template; proceeding without SSO configuration.")
+            replacements['DEX_SSO_CONFIG'] = ""
+        elif connector_key == "none":
+            print("Entering a placeholder for manaul SSO insertion.")
+            replacements['DEX_SSO_CONFIG'] = "{{ DEX_SSO_CONFIG }}"
+        else:
+            placeholders = extract_placeholders(connector_template)
+            user_data = gather_user_input_for_placeholders(placeholders)
+            filled_template = replace_placeholders_in_template(connector_template, user_data)
+            formatted_sso_config = format_sso_config(filled_template)
+            replacements['DEX_SSO_CONFIG'] = formatted_sso_config
+    else:
+        cloud_config = remove_block(cloud_config, 'sso')
+
+    if get_user_input("Generate an initial admin user? (y/n): ").lower() == 'y':
+        init_user_email = get_user_input("Initial user email: ")
+        init_user_password = get_sensitive_user_input("Initial user password: ")
+        replacements['INIT_USER_CREDENTIALS'] = generate_init_user_credentials(init_user_email, init_user_password) or ''
+    else:
+        cloud_config = remove_block(cloud_config, 'init-users')
+
+    if get_user_input("Join this controller to an existing cluster? (y/n): ").lower() == 'y':
+        replacements['FIRST_CONTROLLER_HOSTNAME'] = format_entrypoint(get_user_input("Existing controller hostname: "))
+    else:
+        cloud_config = remove_block(cloud_config, 'should-join')
+
+    for key, value in replacements.items():
+        cloud_config = cloud_config.replace(f"{{{{ {key} }}}}", value)
+
+    cloud_config = remove_empty_lines(remove_comments(cloud_config))
+
     output_file = os.path.join(os.path.dirname(args.input), 'generated-cloud-init.yaml')
     with open(output_file, 'w') as file:
         file.write(cloud_config)
-    
-    # Output the final cloud-config yaml to stdout
+
     print(cloud_config)
     print(f"\nProcessed cloud-config YAML has been written to {output_file}")
 
-# Function to replace placeholders with user input
-def replace_placeholders(content, replacements):
-    for key, value in replacements.items():
-        content = content.replace('{{ ' + key + ' }}', value)
-    return content
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Process cloud-init YAML with user input')
-    parser.add_argument('--input', type=str, required=True, help='Path to the input YAML file')
-    
+    parser = argparse.ArgumentParser(description='Dex SSO Cloud-init Generator')
+    parser.add_argument('--input', required=True, help='Input cloud-init YAML file path')
     args = parser.parse_args()
     main(args)

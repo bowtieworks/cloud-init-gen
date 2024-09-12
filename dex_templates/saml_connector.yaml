@@ -1,0 +1,13 @@
+type: saml
+id: {{ IDP_ID }}
+name: {{ IDP_NAME }}
+config:
+  ssoURL: {{ SSO_URL }}
+  ssoIssuer: {{ SSO_ISSUER }}
+  ca: etc/dex/{{ CERT_FILE_NAME }}
+  redirectURI: $DEX_ORIGIN/dex/callback
+  usernameAttr: name
+  emailAttr: email
+  groupsAttr: groups
+  entityIssuer: bowtie
+  nameIDPolicyFormat: emailAddress

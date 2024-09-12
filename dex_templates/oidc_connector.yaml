@@ -1,0 +1,8 @@
+type: oidc
+id: {{ IDP_ID }}
+name: {{ IDP_NAME }}
+config:
+  issuer: {{ ISSUER_URL }}
+  clientID: {{ CLIENT_ID }}
+  clientSecret: {{ CLIENT_SECRET }}
+  redirectURI: $DEX_ORIGIN/dex/callback

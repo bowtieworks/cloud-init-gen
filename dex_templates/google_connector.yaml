@@ -1,0 +1,7 @@
+type: google
+id: google
+name: Google
+config:
+  clientID: {{ CLIENT_ID }}
+  clientSecret: {{ CLIENT_SECRET }}
+  redirectURI: $DEX_ORIGIN/dex/callback

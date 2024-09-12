@@ -1,0 +1,9 @@
+type: github
+id: github
+name: GitHub
+config:
+  clientID: {{ CLIENT_ID }}
+  clientSecret: {{ CLIENT_SECRET }}
+  redirectURI: $DEX_ORIGIN/dex/callback
+  orgs:
+  - name: {{ ORG_NAME }}

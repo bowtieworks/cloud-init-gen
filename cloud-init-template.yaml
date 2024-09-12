@@ -7,14 +7,7 @@ write_files:
 # start sso block #
 - path: /etc/dex/sso.yaml
   content: |
-    type: {{ IDP_TYPE }}
-    id: {{ IDP_ID }}
-    name: {{ IDP_NAME }}
-    config:
-      issuer: {{ IDP_ISSUER_URL }}
-      clientID: {{ IDP_CLIENT_ID }}
-      clientSecret: {{ IDP_CLIENT_SECRET }}
-      redirectURI: $DEX_ORIGIN/dex/callback
+    {{ DEX_SSO_CONFIG }}
 # end sso block #
 - path: /etc/bowtie-server.d/custom.conf
   content: |
@@ -32,10 +25,13 @@ write_files:
 # end should-join block #
 - path: /var/lib/bowtie/skip-gui-init
 - path: /etc/update-at
-# start ssh key block #
 users:
 - name: root
+  # start ssh key block #
   ssh_authorized_keys:
   - {{ PUBLIC_SSH_KEY }}
-  lock_passwd: true
-# end ssh key block #
+  # end ssh key block #
+  lock_passwd: false
+  # start root password block #
+  hashed_passwd: {{ HASHED_PASSWORD }}
+  # end root password block #
